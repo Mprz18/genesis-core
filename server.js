@@ -1,6 +1,8 @@
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
+const { GoogleGenAI } = require('@google/genai');
+const Groq = require('groq-sdk');
 
 const app = express();
 const port = process.env.PORT || 10000;
@@ -10,27 +12,79 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.json({
     status: 'ONLINE',
-    system: 'GÉNESIS Core v1.0',
+    system: 'GÉNESIS Core v1.2 - Multi-Key Failover Active',
     timestamp: new Date().toISOString()
   });
-});
-
-app.get('/health', (req, res) => {
-  res.status(200).send('OK');
 });
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-wss.on('connection', (ws) => {
-  console.log('⚡ Cliente conectado a GÉNESIS');
-  ws.send(JSON.stringify({ type: 'SYSTEM', message: 'Conexión establecida con GÉNESIS Core' }));
+const geminiKeys = [
+  process.env.GEMINI_API_KEY_1,
+  process.env.GEMINI_API_KEY_2
+].filter(Boolean);
 
-  ws.on('message', (message) => {
-    console.log(`[Recibido]: ${message}`);
+const groqKeys = [
+  process.env.GROQ_API_KEY_1,
+  process.env.GROQ_API_KEY_2,
+  process.env.GROQ_API_KEY_3,
+  process.env.GROQ_API_KEY_4,
+  process.env.GROQ_API_KEY_5
+].filter(Boolean);
+
+async function generateAIResponse(prompt) {
+  // 1. Probar llaves Gemini
+  for (let i = 0; i < geminiKeys.length; i++) {
+    try {
+      console.log(`🤖 Usando Gemini Key #${i + 1}...`);
+      const ai = new GoogleGenAI({ apiKey: geminiKeys[i] });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt
+      });
+      return response.text;
+    } catch (err) {
+      console.warn(`⚠️ Error en Gemini Key #${i + 1}:`, err.message);
+    }
+  }
+
+  // 2. Probar llaves Groq de respaldo
+  for (let j = 0; j < groqKeys.length; j++) {
+    try {
+      console.log(`⚡ Usando Groq Key #${j + 1}...`);
+      const groq = new Groq({ apiKey: groqKeys[j] });
+      const completion = await groq.chat.completions.create({
+        messages: [{ role: 'user', content: prompt }],
+        model: 'llama-3.3-70b-versatile',
+      });
+      return completion.choices[0]?.message?.content || '';
+    } catch (err) {
+      console.warn(`⚠️ Error en Groq Key #${j + 1}:`, err.message);
+    }
+  }
+
+  throw new Error('Todas las API Keys fallaron.');
+}
+
+wss.on('connection', (ws) => {
+  console.log('⚡ Cliente conectado');
+  ws.send(JSON.stringify({ type: 'SYSTEM', message: 'GÉNESIS Core listo' }));
+
+  ws.on('message', async (message) => {
+    try {
+      const userText = message.toString();
+      console.log(`[Usuario]: ${userText}`);
+      
+      const reply = await generateAIResponse(userText);
+      ws.send(JSON.stringify({ type: 'AI_RESPONSE', text: reply }));
+    } catch (error) {
+      console.error('❌ Error general:', error.message);
+      ws.send(JSON.stringify({ type: 'ERROR', message: 'Servidores saturados.' }));
+    }
   });
 });
 
 server.listen(port, () => {
-  console.log(`🚀 GÉNESIS Core ejecutándose en el puerto ${port}`);
+  console.log(`🚀 GÉNESIS Core ejecutándose en puerto ${port}`);
 });
