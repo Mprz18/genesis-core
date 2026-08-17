@@ -12,7 +12,7 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.json({
     status: 'ONLINE',
-    system: 'GÉNESIS Core v1.2 - Multi-Key Failover Active',
+    system: 'GÉNESIS Core v1.3 - Active',
     timestamp: new Date().toISOString()
   });
 });
@@ -34,12 +34,12 @@ const groqKeys = [
 ].filter(Boolean);
 
 async function generateAIResponse(prompt) {
-  // 1. Probar llaves Gemini
+  // 1. Probar llaves Gemini (Modelo oficial: gemini-1.5-flash)
   for (let i = 0; i < geminiKeys.length; i++) {
     try {
-      console.log(`🤖 Usando Gemini Key #${i + 1}...`);
+      console.log(`🤖 Probando Gemini Key #${i + 1}...`);
       const genAI = new GoogleGenerativeAI(geminiKeys[i]);
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       const result = await model.generateContent(prompt);
       return result.response.text();
     } catch (err) {
@@ -50,7 +50,7 @@ async function generateAIResponse(prompt) {
   // 2. Probar llaves Groq de respaldo
   for (let j = 0; j < groqKeys.length; j++) {
     try {
-      console.log(`⚡ Usando Groq Key #${j + 1}...`);
+      console.log(`⚡ Probando Groq Key #${j + 1}...`);
       const groq = new Groq({ apiKey: groqKeys[j] });
       const completion = await groq.chat.completions.create({
         messages: [{ role: 'user', content: prompt }],
@@ -62,7 +62,7 @@ async function generateAIResponse(prompt) {
     }
   }
 
-  throw new Error('Todas las API Keys fallaron.');
+  throw new Error('Todas las API Keys fallaron o no están configuradas.');
 }
 
 wss.on('connection', (ws) => {
@@ -78,11 +78,11 @@ wss.on('connection', (ws) => {
       ws.send(JSON.stringify({ type: 'AI_RESPONSE', text: reply }));
     } catch (error) {
       console.error('❌ Error general:', error.message);
-      ws.send(JSON.stringify({ type: 'ERROR', message: 'Servidores saturados.' }));
+      ws.send(JSON.stringify({ type: 'ERROR', message: `Error: ${error.message}` }));
     }
   });
 });
 
 server.listen(port, () => {
-  console.log(`🚀 GÉNESIS Core ejecutándose en puerto ${port}`);
+  console.log(`🚀 GÉNESIS Core v1.3 ejecutándose en puerto ${port}`);
 });
