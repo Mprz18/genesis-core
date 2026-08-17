@@ -12,7 +12,7 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.json({
     status: 'ONLINE',
-    system: 'GÉNESIS Core v1.3 - Active',
+    system: 'GÉNESIS Core v1.5 - Multi-Model Fallback',
     timestamp: new Date().toISOString()
   });
 });
@@ -20,54 +20,66 @@ app.get('/', (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-const geminiKeys = [
-  process.env.GEMINI_API_KEY_1,
-  process.env.GEMINI_API_KEY_2
-].filter(Boolean);
-
-const groqKeys = [
-  process.env.GROQ_API_KEY_1,
-  process.env.GROQ_API_KEY_2,
-  process.env.GROQ_API_KEY_3,
-  process.env.GROQ_API_KEY_4,
-  process.env.GROQ_API_KEY_5
-].filter(Boolean);
+const geminiModels = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-flash-exp'];
+const groqModels = ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile', 'llama3-70b-8192', 'mixtral-8x7b-32768'];
 
 async function generateAIResponse(prompt) {
-  // 1. Probar llaves Gemini (Modelo oficial: gemini-1.5-flash)
+  const geminiKeys = [
+    process.env.GEMINI_API_KEY_1,
+    process.env.GEMINI_API_KEY_2
+  ].filter(Boolean);
+
+  const groqKeys = [
+    process.env.GROQ_API_KEY_1,
+    process.env.GROQ_API_KEY_2,
+    process.env.GROQ_API_KEY_3,
+    process.env.GROQ_API_KEY_4,
+    process.env.GROQ_API_KEY_5
+  ].filter(Boolean);
+
+  let errors = [];
+
+  // 1. Iterar llaves y modelos Gemini
   for (let i = 0; i < geminiKeys.length; i++) {
-    try {
-      console.log(`🤖 Probando Gemini Key #${i + 1}...`);
-      const genAI = new GoogleGenerativeAI(geminiKeys[i]);
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-      const result = await model.generateContent(prompt);
-      return result.response.text();
-    } catch (err) {
-      console.warn(`⚠️ Error en Gemini Key #${i + 1}:`, err.message);
+    const genAI = new GoogleGenerativeAI(geminiKeys[i]);
+    for (const modelName of geminiModels) {
+      try {
+        console.log(`🤖 Probando Gemini Key #${i + 1} (${modelName})...`);
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContent(prompt);
+        return result.response.text();
+      } catch (err) {
+        console.warn(`⚠️ Falló ${modelName} en Gemini Key #${i + 1}:`, err.message);
+        errors.push(`Gemini K#${i + 1} [${modelName}]: ${err.message}`);
+      }
     }
   }
 
-  // 2. Probar llaves Groq de respaldo
+  // 2. Iterar llaves y modelos Groq
   for (let j = 0; j < groqKeys.length; j++) {
-    try {
-      console.log(`⚡ Probando Groq Key #${j + 1}...`);
-      const groq = new Groq({ apiKey: groqKeys[j] });
-      const completion = await groq.chat.completions.create({
-        messages: [{ role: 'user', content: prompt }],
-        model: 'llama-3.3-70b-versatile',
-      });
-      return completion.choices[0]?.message?.content || '';
-    } catch (err) {
-      console.warn(`⚠️ Error en Groq Key #${j + 1}:`, err.message);
+    const groq = new Groq({ apiKey: groqKeys[j] });
+    for (const modelName of groqModels) {
+      try {
+        console.log(`⚡ Probando Groq Key #${j + 1} (${modelName})...`);
+        const completion = await groq.chat.completions.create({
+          messages: [{ role: 'user', content: prompt }],
+          model: modelName,
+        });
+        const content = completion.choices[0]?.message?.content;
+        if (content) return content;
+      } catch (err) {
+        console.warn(`⚠️ Falló ${modelName} en Groq Key #${j + 1}:`, err.message);
+        errors.push(`Groq K#${j + 1} [${modelName}]: ${err.message}`);
+      }
     }
   }
 
-  throw new Error('Todas las API Keys fallaron o no están configuradas.');
+  throw new Error(`Fallback agotado. Último error: ${errors[errors.length - 1] || 'Sin respuesta'}`);
 }
 
 wss.on('connection', (ws) => {
   console.log('⚡ Cliente conectado');
-  ws.send(JSON.stringify({ type: 'SYSTEM', message: 'GÉNESIS Core listo' }));
+  ws.send(JSON.stringify({ type: 'SYSTEM', message: 'GÉNESIS Core v1.5 listo' }));
 
   ws.on('message', async (message) => {
     try {
@@ -78,11 +90,11 @@ wss.on('connection', (ws) => {
       ws.send(JSON.stringify({ type: 'AI_RESPONSE', text: reply }));
     } catch (error) {
       console.error('❌ Error general:', error.message);
-      ws.send(JSON.stringify({ type: 'ERROR', message: `Error: ${error.message}` }));
+      ws.send(JSON.stringify({ type: 'ERROR', message: error.message }));
     }
   });
 });
 
 server.listen(port, () => {
-  console.log(`🚀 GÉNESIS Core v1.3 ejecutándose en puerto ${port}`);
+  console.log(`🚀 GÉNESIS Core v1.5 activo en puerto ${port}`);
 });
