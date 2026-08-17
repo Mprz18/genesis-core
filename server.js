@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Groq = require('groq-sdk');
 
 const app = express();
@@ -38,12 +38,10 @@ async function generateAIResponse(prompt) {
   for (let i = 0; i < geminiKeys.length; i++) {
     try {
       console.log(`🤖 Usando Gemini Key #${i + 1}...`);
-      const ai = new GoogleGenAI({ apiKey: geminiKeys[i] });
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt
-      });
-      return response.text;
+      const genAI = new GoogleGenerativeAI(geminiKeys[i]);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const result = await model.generateContent(prompt);
+      return result.response.text();
     } catch (err) {
       console.warn(`⚠️ Error en Gemini Key #${i + 1}:`, err.message);
     }
