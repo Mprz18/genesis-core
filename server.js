@@ -19,21 +19,27 @@ function getCleanKeys(prefix) {
     .filter(item => item.value && item.value.length > 10);
 }
 
+// Limpia el razonamiento interno (<think>...</think>) de los modelos de IA
+function sanitizeAIOutput(text) {
+  if (!text) return '';
+  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+}
+
 app.get('/', (req, res) => {
-  res.json({ status: 'ONLINE', system: 'GÉNESIS Core v3.1 Memory-Enabled' });
+  res.json({ status: 'ONLINE', system: 'GÉNESIS Core v3.2 Active Memory & Clean Output' });
 });
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// --- MÓDULO DE BASE DE DATOS (SUPABASE REST) ---
+// --- MÓDULO SUPABASE REST ---
 async function saveMessage(userId, role, content) {
   const url = cleanKey(process.env.SUPABASE_URL);
   const key = cleanKey(process.env.SUPABASE_ANON_KEY);
   if (!url || !key) return;
 
   try {
-    await fetch(`${url}/rest/v1/chat_history`, {
+    const res = await fetch(`${url}/rest/v1/chat_history`, {
       method: 'POST',
       headers: {
         'apikey': key,
@@ -43,23 +49,32 @@ async function saveMessage(userId, role, content) {
       },
       body: JSON.stringify({ user_id: String(userId), role, content })
     });
+    if (!res.ok) {
+      console.warn('⚠️ Supabase Save Failed:', await res.text());
+    }
   } catch (e) {
     console.warn('⚠️ Error guardando en Supabase:', e.message);
   }
 }
 
-async function getRecentHistory(userId, limit = 6) {
+async function getRecentHistory(userId, limit = 8) {
   const url = cleanKey(process.env.SUPABASE_URL);
   const key = cleanKey(process.env.SUPABASE_ANON_KEY);
   if (!url || !key) return [];
 
   try {
     const res = await fetch(`${url}/rest/v1/chat_history?user_id=eq.${userId}&order=created_at.desc&limit=${limit}`, {
-      headers: { 'apikey': key, 'Authorization': `Bearer ${key}` }
+      headers: {
+        'apikey': key,
+        'Authorization': `Bearer ${key}`
+      }
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.warn('⚠️ Supabase Fetch Failed:', await res.text());
+      return [];
+    }
     const data = await res.json();
-    return data.reverse(); // Ordenar del más antiguo al más reciente
+    return data.reverse();
   } catch (e) {
     console.warn('⚠️ Error leyendo historial:', e.message);
     return [];
@@ -83,7 +98,9 @@ async function callGroqDynamic(apiKey, messages) {
         body: JSON.stringify({ model: modelId, messages })
       });
       const data = await res.json();
-      if (res.ok && data.choices?.[0]?.message?.content) return data.choices[0].message.content;
+      if (res.ok && data.choices?.[0]?.message?.content) {
+        return sanitizeAIOutput(data.choices[0].message.content);
+      }
     } catch (e) {}
   }
   throw new Error('Groq no pudo procesar la solicitud');
@@ -109,7 +126,7 @@ async function callGeminiDynamic(apiKey, promptText) {
       });
       const data = await res.json();
       if (res.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
-        return data.candidates[0].content.parts[0].text;
+        return sanitizeAIOutput(data.candidates[0].content.parts[0].text);
       }
     } catch (e) {}
   }
@@ -117,16 +134,17 @@ async function callGeminiDynamic(apiKey, promptText) {
 }
 
 async function generateAIResponseWithMemory(userId, newPrompt) {
-  const history = await getRecentHistory(userId, 6);
+  const history = await getRecentHistory(userId, 8);
   
-  // Formato para Groq / OpenAI
   const messages = [
-    { role: 'system', content: 'Eres GÉNESIS, un asistente de IA proactivo, directo y extremadamente capaz.' },
+    { 
+      role: 'system', 
+      content: 'Eres GÉNESIS, un asistente de IA proactivo, inteligente y empático. Tienes acceso al historial reciente de conversación para recordar los gustos y datos del usuario.' 
+    },
     ...history.map(h => ({ role: h.role === 'assistant' ? 'assistant' : 'user', content: h.content })),
     { role: 'user', content: newPrompt }
   ];
 
-  // Texto concatenado para Gemini
   const fullPromptGemini = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
 
   const groqKeys = getCleanKeys('GROQ_API_KEY');
@@ -146,7 +164,7 @@ async function generateAIResponseWithMemory(userId, newPrompt) {
 
   if (!reply) throw new Error('Ninguna IA pudo generar respuesta.');
 
-  // Guardar en segundo plano
+  // Guardar en Supabase en segundo plano
   await saveMessage(userId, 'user', newPrompt);
   await saveMessage(userId, 'assistant', reply);
 
@@ -199,7 +217,7 @@ async function pollTelegram() {
 
 // --- WEBSOCKET TERMINAL ---
 wss.on('connection', (ws) => {
-  ws.send(JSON.stringify({ type: 'SYSTEM', message: 'GÉNESIS Core v3.1 listo' }));
+  ws.send(JSON.stringify({ type: 'SYSTEM', message: 'GÉNESIS Core v3.2 listo' }));
   ws.on('message', async (message) => {
     try {
       const reply = await generateAIResponseWithMemory('web_terminal_user', message.toString());
@@ -211,6 +229,6 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(port, () => {
-  console.log(`🚀 GÉNESIS Core v3.1 activo con Memoria en puerto ${port}`);
+  console.log(`🚀 GÉNESIS Core v3.2 activo en puerto ${port}`);
   pollTelegram();
 });
